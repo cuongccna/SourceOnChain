@@ -95,7 +95,7 @@ module.exports = {
     {
       name: `${APP_NAME}-scheduler`,
       script: 'scheduler.py',
-      interpreter: '.venv/bin/python',
+      interpreter: PYTHON_INTERPRETER,
       cwd: __dirname,
       
       // Single instance only
