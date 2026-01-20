@@ -19,13 +19,31 @@ const INSTANCES = process.env.PM2_INSTANCES || 1;
 const MAX_MEMORY = process.env.PM2_MAX_MEMORY || '512M';
 const LOG_LEVEL = process.env.ONCHAIN_LOG_LEVEL || 'INFO';
 
+// Detect Python interpreter path (Linux: venv/bin/python, Windows: .venv/Scripts/python.exe)
+const fs = require('fs');
+const path = require('path');
+let PYTHON_INTERPRETER = 'python3';  // fallback
+
+// Check for Linux venv first
+if (fs.existsSync(path.join(__dirname, 'venv', 'bin', 'python'))) {
+  PYTHON_INTERPRETER = path.join(__dirname, 'venv', 'bin', 'python');
+} 
+// Check for Windows .venv
+else if (fs.existsSync(path.join(__dirname, '.venv', 'Scripts', 'python.exe'))) {
+  PYTHON_INTERPRETER = path.join(__dirname, '.venv', 'Scripts', 'python.exe');
+}
+// Check for Linux .venv
+else if (fs.existsSync(path.join(__dirname, '.venv', 'bin', 'python'))) {
+  PYTHON_INTERPRETER = path.join(__dirname, '.venv', 'bin', 'python');
+}
+
 module.exports = {
   apps: [
     // Main API Server
     {
       name: APP_NAME,
       script: 'api_server.py',
-      interpreter: '.venv/bin/python',
+      interpreter: PYTHON_INTERPRETER,
       cwd: __dirname,
       
       // Process settings
