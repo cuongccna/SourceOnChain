@@ -46,6 +46,9 @@ from btc_collector.core.data_quality import (
     DataQualityChecker, DataState, verify_data,
     COMPLETENESS_THRESHOLD, MAX_DATA_AGE_HOURS
 )
+from btc_collector.utils.telegram import (
+    TelegramAlerter, get_telegram_alerter, AlertLevel
+)
 
 
 # ============================================================
@@ -303,6 +306,7 @@ class OnChainDataCollector:
 # Global instances
 collector = None
 db = None
+telegram_alerter = None
 
 
 @asynccontextmanager
@@ -323,10 +327,32 @@ async def lifespan(app: FastAPI):
     collector = OnChainDataCollector(db=db)
     print(f"📡 Data Source: {collector.config.data_source}")
     
+    # Initialize Telegram alerter
+    global telegram_alerter
+    telegram_alerter = get_telegram_alerter()
+    if telegram_alerter.config.enabled:
+        print(f"📱 Telegram alerts enabled")
+        # Send startup notification
+        await telegram_alerter.send_alert(
+            AlertLevel.SUCCESS,
+            "OnChain API Started",
+            f"Server is running on port {os.getenv('ONCHAIN_API_PORT', '8500')}",
+            {"data_source": collector.config.data_source}
+        )
+    else:
+        print("⚠️ Telegram alerts disabled (not configured)")
+    
     yield
     
     # Cleanup
     print("👋 Shutting down...")
+    if telegram_alerter and telegram_alerter.config.enabled:
+        await telegram_alerter.send_alert(
+            AlertLevel.WARNING,
+            "OnChain API Shutting Down",
+            "Server is stopping"
+        )
+        await telegram_alerter.close()
     if db:
         db.close()
 
@@ -600,6 +626,192 @@ async def get_data_quality():
             "completeness": COMPLETENESS_THRESHOLD,
             "max_data_age_hours": MAX_DATA_AGE_HOURS
         }
+    }
+
+
+# ============================================================
+# Telegram Reporting Endpoints
+# ============================================================
+
+@app.post("/api/v1/telegram/send-report")
+async def send_telegram_report():
+    """
+    📱 Send OnChain report to Telegram channel.
+    
+    Sends the current on-chain context as a formatted Telegram message.
+    """
+    if telegram_alerter is None or not telegram_alerter.config.enabled:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    
+    try:
+        # Collect current data
+        metrics = collector.collect_all_metrics()
+        signals = collector.calculate_signals(metrics)
+        verification_result = collector.verify_data_quality(metrics, signals)
+        
+        score, bias, confidence = collector.calculate_score(signals)
+        state = verification_result.get('state', 'ACTIVE')
+        
+        # Build context for report
+        report_data = {
+            "state": state,
+            "decision_context": {
+                "onchain_score": score,
+                "bias": bias,
+                "confidence": confidence * verification_result.get('confidence_multiplier', 1.0)
+            },
+            "signals": {
+                "active": [k for k, v in signals.items() if v]
+            },
+            "metrics": {
+                "whale": metrics.get('whale', {})
+            },
+            "verification": {
+                "data_completeness": verification_result.get('quality', {}).get('completeness_score', 1.0),
+                "data_age_seconds": verification_result.get('quality', {}).get('data_age_seconds', 0),
+                "invariants_passed": verification_result.get('invariants_passed', True)
+            },
+            "usage_policy": {
+                "allowed": state != "BLOCKED",
+                "recommended_weight": 0.3 if state == "ACTIVE" else (0.15 if state == "DEGRADED" else 0.0)
+            }
+        }
+        
+        success = await telegram_alerter.send_onchain_report(report_data)
+        
+        return {
+            "success": success,
+            "message": "Report sent to Telegram" if success else "Failed to send report",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/telegram/send-whale-alert")
+async def send_whale_alert():
+    """
+    🐋 Send whale activity alert to Telegram.
+    """
+    if telegram_alerter is None or not telegram_alerter.config.enabled:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    
+    try:
+        metrics = collector.collect_all_metrics()
+        whale = metrics.get('whale', {})
+        
+        net_flow = whale.get('net_whale_flow', 0)
+        if net_flow > 100:
+            behavior = "ACCUMULATION"
+            description = "Whales are accumulating (net inflow)"
+        elif net_flow < -100:
+            behavior = "DISTRIBUTION"
+            description = "Whales are distributing/selling (net outflow)"
+        else:
+            behavior = "NEUTRAL"
+            description = "Balanced whale activity"
+        
+        whale_data = {
+            "behavior": behavior,
+            "description": description,
+            "metrics": {
+                "net_flow_btc": net_flow,
+                "whale_volume_btc": whale.get('whale_volume_btc', 0),
+                "whale_tx_count": whale.get('whale_tx_count', 0),
+                "dominance_ratio": whale.get('whale_dominance', 0)
+            }
+        }
+        
+        success = await telegram_alerter.send_whale_alert(whale_data)
+        
+        return {
+            "success": success,
+            "message": "Whale alert sent" if success else "Failed to send",
+            "behavior": behavior
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/telegram/send-daily-summary")
+async def send_daily_summary():
+    """
+    📊 Send daily summary to Telegram.
+    
+    Requires database to be configured for statistics.
+    """
+    if telegram_alerter is None or not telegram_alerter.config.enabled:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    
+    try:
+        score_stats = db.get_score_statistics(24)
+        bias_dist = db.get_bias_distribution(24)
+        whale_summary = db.get_whale_activity_summary(24)
+        
+        stats = {
+            "score_statistics": score_stats,
+            "bias_distribution": bias_dist,
+            "whale_activity": whale_summary
+        }
+        
+        success = await telegram_alerter.send_daily_summary(stats)
+        
+        return {
+            "success": success,
+            "message": "Daily summary sent" if success else "Failed to send"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/telegram/send-alert")
+async def send_custom_alert(
+    level: str = Query("INFO", description="Alert level: INFO, SUCCESS, WARNING, ERROR, CRITICAL"),
+    title: str = Query(..., description="Alert title"),
+    message: str = Query(..., description="Alert message")
+):
+    """
+    📢 Send custom alert to Telegram.
+    """
+    if telegram_alerter is None or not telegram_alerter.config.enabled:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    
+    try:
+        alert_level = AlertLevel[level.upper()]
+        success = await telegram_alerter.send_alert(alert_level, title, message)
+        
+        return {
+            "success": success,
+            "message": "Alert sent" if success else "Failed to send"
+        }
+        
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Invalid alert level: {level}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/telegram/status")
+async def get_telegram_status():
+    """
+    📱 Get Telegram alerting status.
+    """
+    if telegram_alerter is None:
+        return {
+            "enabled": False,
+            "message": "Telegram alerter not initialized"
+        }
+    
+    return {
+        "enabled": telegram_alerter.config.enabled,
+        "channel_configured": bool(telegram_alerter.config.channel_id),
+        "bot_configured": bool(telegram_alerter.config.bot_token)
     }
 
 
