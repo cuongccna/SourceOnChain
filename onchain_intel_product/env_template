@@ -1,0 +1,31 @@
+# OnChain Intelligence Data Product Configuration
+
+# Database Configuration
+ONCHAIN_DATABASE_URL=postgresql://onchain_user:onchain_pass@localhost:5432/bitcoin_onchain_signals
+
+# PostgreSQL Admin Configuration (for database setup)
+# DB_ADMIN_PASSWORD=your_postgres_password_here
+
+# Kill Switch Thresholds
+ONCHAIN_MIN_CONFIDENCE=0.60
+ONCHAIN_STABILITY_THRESHOLD=0.70
+ONCHAIN_COMPLETENESS_THRESHOLD=0.80
+
+# Data Quality Thresholds  
+ONCHAIN_MAX_DATA_AGE_HOURS=2.0
+ONCHAIN_MAX_CONFLICTING_SIGNALS=2
+
+# Usage Policy Weights
+ONCHAIN_NORMAL_WEIGHT=1.0
+ONCHAIN_DEGRADED_WEIGHT=0.3
+
+# Logging Configuration
+ONCHAIN_LOG_LEVEL=INFO
+
+# API Configuration (Optional)
+ONCHAIN_API_HOST=0.0.0.0
+ONCHAIN_API_PORT=8000
+ONCHAIN_API_WORKERS=4
+
+# Security (Production)
+ONCHAIN_API_KEY=your_secure_api_key_here_change_in_production
