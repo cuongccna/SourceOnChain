@@ -7,11 +7,12 @@
  *   pm2 stop all
  *   pm2 restart all
  *   pm2 logs
+ * 
+ * Note: Environment variables are loaded from .env by the Python app itself.
+ * We don't use dotenv here to avoid Node.js module dependency.
  */
 
-// Load environment from .env
-require('dotenv').config();
-
+// Read env vars directly (set them in shell or use: source .env && pm2 start ...)
 const APP_NAME = process.env.PM2_APP_NAME || 'onchain-intelligence';
 const PORT = process.env.ONCHAIN_API_PORT || 8500;
 const INSTANCES = process.env.PM2_INSTANCES || 1;

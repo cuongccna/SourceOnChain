@@ -45,17 +45,24 @@ pip install -r requirements.txt
 ```
 
 ### 4. Database Setup
+
+**PostgreSQL 15+ requires extra permissions!**
+
 ```bash
-# Create database (as postgres user)
-sudo -u postgres psql
+# Step 1: Run setup as postgres superuser (creates DB, user, grants)
+sudo -u postgres psql -f setup_db.sql
 
-CREATE DATABASE bitcoin_onchain_signals;
-CREATE USER your_user WITH ENCRYPTED PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE bitcoin_onchain_signals TO your_user;
-\q
+# Step 2: Edit setup_db.sql to change password first!
+# Or change password after:
+sudo -u postgres psql -c "ALTER USER onchain_user WITH PASSWORD 'your_secure_password';"
 
-# Run schema
-./deploy.sh db-init
+# Step 3: Run schema as app user
+PGPASSWORD='your_password' psql -h localhost -U onchain_user -d bitcoin_onchain_signals -f schema.sql
+```
+
+**Or via deploy script:**
+```bash
+sudo ./deploy.sh db-init
 ```
 
 ### 5. Start Service

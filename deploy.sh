@@ -104,8 +104,10 @@ cmd_install() {
     # Initialize database
     cmd_db_init
     
-    # Setup PM2
+    # Setup PM2 (export env vars first)
     log_info "Setting up PM2..."
+    mkdir -p "$APP_DIR/logs"
+    set -a; source "$ENV_FILE"; set +a
     pm2 start "$APP_DIR/ecosystem.config.js"
     pm2 save
     
@@ -134,6 +136,8 @@ cmd_update() {
 
 cmd_start() {
     log_info "Starting $APP_NAME..."
+    mkdir -p "$APP_DIR/logs"
+    set -a; source "$ENV_FILE"; set +a
     pm2 start "$APP_DIR/ecosystem.config.js"
     pm2 save
     log_info "Started. Use 'pm2 status' to check."
@@ -170,9 +174,20 @@ cmd_db_init() {
         exit 1
     fi
     
-    # Run schema
+    # Check if running as root for postgres access
+    if [ "$EUID" -eq 0 ] || [ "$(whoami)" = "postgres" ]; then
+        log_info "Running setup_db.sql as superuser..."
+        if [ -f "$APP_DIR/setup_db.sql" ]; then
+            sudo -u postgres psql -f "$APP_DIR/setup_db.sql" || true
+        fi
+    else
+        log_warn "Not running as root. Please run setup_db.sql manually as postgres:"
+        log_warn "  sudo -u postgres psql -f $APP_DIR/setup_db.sql"
+    fi
+    
+    # Run schema as app user
     if [ -f "$APP_DIR/schema.sql" ]; then
-        log_info "Running schema.sql..."
+        log_info "Running schema.sql as $DB_USER..."
         PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -f "$APP_DIR/schema.sql"
         log_info "Database schema created."
     else
