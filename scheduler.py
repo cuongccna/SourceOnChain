@@ -134,6 +134,9 @@ class OnChainScheduler:
             # Collect whale metrics
             whale_metrics = self.whale_detector.get_quick_metrics()
             
+            # Get detected whale transactions for persistence
+            whale_transactions = self.whale_detector.get_whale_transactions()
+            
             # Build metrics dict
             metrics = {
                 "blockchain": {
@@ -199,6 +202,11 @@ class OnChainScheduler:
             # Persist
             self.db.save_metrics(metrics)
             self.db.save_signals(signals, score, bias, confidence, state)
+            
+            # Save whale transactions to database
+            if whale_transactions:
+                saved_count = self.db.save_whale_transactions(whale_transactions)
+                logger.debug("Whale transactions saved", count=saved_count)
             
             self.collections += 1
             self.last_collection = timestamp

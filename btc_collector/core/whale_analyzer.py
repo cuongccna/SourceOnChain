@@ -491,16 +491,40 @@ class QuickWhaleDetector:
         self.client = mempool_client
         self.thresholds = {
             'whale': Decimal('10'),
-            'ultra_whale': Decimal('100')
+            'ultra_whale': Decimal('100'),
+            'leviathan': Decimal('500')
         }
         self._cache = None
         self._cache_time = None
         self._cache_ttl = 120  # 2 minutes cache
+        
+        # Store detected whale transactions
+        self._whale_transactions = []
     
     def _is_cache_valid(self) -> bool:
         if self._cache is None or self._cache_time is None:
             return False
         return (datetime.utcnow() - self._cache_time).seconds < self._cache_ttl
+    
+    def _classify_tier(self, value_btc: Decimal) -> str:
+        """Classify transaction into whale tier."""
+        if value_btc >= self.thresholds['leviathan']:
+            return 'leviathan'
+        elif value_btc >= self.thresholds['ultra_whale']:
+            return 'ultra_whale'
+        elif value_btc >= self.thresholds['whale']:
+            return 'whale'
+        return 'large'
+    
+    def _classify_flow(self, inputs: int, outputs: int) -> str:
+        """Classify transaction flow type."""
+        if inputs >= 3 and outputs <= 2:
+            return 'inflow'  # Accumulation - many inputs, few outputs
+        elif inputs <= 2 and outputs >= 3:
+            return 'outflow'  # Distribution - few inputs, many outputs
+        elif inputs == 1 and outputs == 1:
+            return 'internal'  # Internal transfer
+        return 'unknown'
     
     def get_quick_metrics(self) -> Dict[str, Any]:
         """
@@ -520,6 +544,9 @@ class QuickWhaleDetector:
             whale_outflow = Decimal('0')
             total_sampled = 0
             
+            # Clear previous transactions
+            self._whale_transactions = []
+            
             # Analyze last 2 blocks
             for h in range(height, max(height - 2, 0), -1):
                 block_hash = self.client.get_block_hash(h)
@@ -538,14 +565,34 @@ class QuickWhaleDetector:
                         whale_count += 1
                         whale_volume += value_btc
                         
-                        # Simple flow classification
+                        # Classify transaction
                         inputs = len(tx.get('vin', []))
                         outputs = len(tx.get('vout', []))
+                        flow_type = self._classify_flow(inputs, outputs)
+                        tier = self._classify_tier(value_btc)
                         
-                        if inputs >= 3 and outputs <= 2:
+                        if flow_type == 'inflow':
                             whale_inflow += value_btc
-                        elif inputs <= 2 and outputs >= 3:
+                        elif flow_type == 'outflow':
                             whale_outflow += value_btc
+                        
+                        # Calculate fee
+                        fee_sats = tx.get('fee', 0)
+                        fee_btc = Decimal(fee_sats) / Decimal('100000000')
+                        
+                        # Store whale transaction for persistence
+                        whale_tx = {
+                            'txid': tx.get('txid'),
+                            'block_height': h,
+                            'timestamp': tx.get('status', {}).get('block_time', int(datetime.utcnow().timestamp())),
+                            'value_btc': float(value_btc),
+                            'tier': tier,
+                            'flow_type': flow_type,
+                            'fee_btc': float(fee_btc),
+                            'input_count': inputs,
+                            'output_count': outputs
+                        }
+                        self._whale_transactions.append(whale_tx)
             
             # Extrapolate to estimate full metrics
             # Average ~3000 txs per block, we sampled 50
@@ -559,6 +606,7 @@ class QuickWhaleDetector:
                 "net_whale_flow": float((whale_inflow - whale_outflow) * extrapolation_factor),
                 "whale_dominance": min(0.5, float(whale_volume / Decimal(max(total_sampled, 1)) * Decimal('0.1'))),
                 "sampled_txs": total_sampled,
+                "detected_whale_txs": len(self._whale_transactions),
                 "estimated": True,
                 "timestamp": datetime.utcnow().isoformat()
             }
@@ -581,3 +629,14 @@ class QuickWhaleDetector:
                 "error": str(e),
                 "timestamp": datetime.utcnow().isoformat()
             }
+    
+    def get_whale_transactions(self) -> List[Dict[str, Any]]:
+        """
+        Get list of detected whale transactions.
+        
+        Call get_quick_metrics() first to populate this list.
+        
+        Returns:
+            List of whale transaction dicts ready for database persistence
+        """
+        return self._whale_transactions
