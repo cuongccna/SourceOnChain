@@ -88,16 +88,17 @@ class TelegramAlerter:
         url = self.BASE_URL.format(token=self.config.bot_token, method=method)
         
         try:
-            session = await self._get_session()
-            async with session.post(url, json=data, timeout=30) as response:
-                result = await response.json()
-                
-                if not result.get('ok'):
-                    logger.error("Telegram API error", 
-                               error=result.get('description'),
-                               error_code=result.get('error_code'))
-                
-                return result
+            # Create new session for each request to avoid event loop issues
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    result = await response.json()
+                    
+                    if not result.get('ok'):
+                        logger.error("Telegram API error", 
+                                   error=result.get('description'),
+                                   error_code=result.get('error_code'))
+                    
+                    return result
                 
         except asyncio.TimeoutError:
             logger.error("Telegram request timeout")
