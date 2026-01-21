@@ -28,8 +28,23 @@ try:
     import asyncio
     from btc_collector.utils.telegram import get_telegram_alerter, AlertLevel
     TELEGRAM_AVAILABLE = True
+    
+    def run_async(coro):
+        """Run async coroutine from sync code safely."""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error("Async run failed", error=str(e))
+            return None
 except ImportError:
     TELEGRAM_AVAILABLE = False
+    def run_async(coro):
+        return None
 
 logger = structlog.get_logger(__name__)
 
@@ -199,7 +214,7 @@ class OnChainScheduler:
                 try:
                     # 1. State change alert
                     if state != self._last_state:
-                        asyncio.run(self.telegram_alerter.send_state_change_alert(
+                        run_async(self.telegram_alerter.send_state_change_alert(
                             self._last_state, 
                             state,
                             f"Score: {score}, Confidence: {confidence:.2f}"
@@ -218,7 +233,7 @@ class OnChainScheduler:
                                 'dominance_ratio': whale_dominance
                             }
                         }
-                        asyncio.run(self.telegram_alerter.send_whale_alert(whale_data))
+                        run_async(self.telegram_alerter.send_whale_alert(whale_data))
                     self._last_net_flow = net_flow
                     
                     # 3. Periodic report (every N collections)
@@ -246,7 +261,7 @@ class OnChainScheduler:
                                 "recommended_weight": 0.3 if state == "ACTIVE" else 0.15
                             }
                         }
-                        asyncio.run(self.telegram_alerter.send_onchain_report(report_data))
+                        run_async(self.telegram_alerter.send_onchain_report(report_data))
                         logger.info("Telegram report sent", collections=self.collections)
                         
                 except Exception as e:
@@ -351,7 +366,7 @@ def main():
     # Send startup notification
     if scheduler.telegram_enabled and scheduler.telegram_alerter:
         try:
-            asyncio.run(scheduler.telegram_alerter.send_alert(
+            run_async(scheduler.telegram_alerter.send_alert(
                 AlertLevel.SUCCESS,
                 "OnChain Scheduler Started",
                 f"Collecting data every {interval} seconds",
